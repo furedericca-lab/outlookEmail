@@ -173,8 +173,8 @@
                         </div>
                         <div class="account-meta-row">
                             <span class="account-status-pill provider"
-                                style="--pill-accent: ${email.provider === 'duckmail' ? '#ff9800' : (email.provider === 'cloudflare' ? '#f48120' : '#00bcf2')}">
-                                ${escapeHtml(email.provider === 'duckmail' ? 'DuckMail' : (email.provider === 'cloudflare' ? 'Cloudflare' : 'GPTMail'))}
+                                style="--pill-accent: ${email.provider === 'duckmail' ? '#ff9800' : (email.provider === 'cloudflare' ? '#f48120' : (email.provider === 'cloudmail' ? '#3b82f6' : '#00bcf2'))}">
+                                ${escapeHtml(email.provider === 'duckmail' ? 'DuckMail' : (email.provider === 'cloudflare' ? 'Cloudflare' : (email.provider === 'cloudmail' ? 'cloud-mail' : 'GPTMail')))}
                             </span>
                             <span class="account-status-pill muted">临时邮箱</span>
                             ${email.provider === 'cloudflare' && email.cloudflare_channel_name ? `<span class="account-status-pill muted">${escapeHtml(email.cloudflare_channel_name)}</span>` : ''}
@@ -297,6 +297,16 @@
                                             <span>DuckMail</span>
                                         </label>
                                     </div>
+                                    <div class="provider-tab-item">
+                                        <input type="radio" id="providerCloudmail" name="tempEmailProvider" value="cloudmail" onchange="toggleTempEmailProvider('cloudmail')">
+                                        <label class="provider-tab-label" for="providerCloudmail" id="providerLabelCloudmail">
+                                            <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                                                <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+                                            </svg>
+                                            <span>cloud-mail</span>
+                                        </label>
+                                    </div>
                                 </div>
                             </div>
                             <div id="gptmailFields">
@@ -328,6 +338,19 @@
                                     </div>
                                     <div class="form-hint">用于登录邮箱，请务必牢记密码。邮件保存 3 天，账号不会自动删除</div>
                                 </div>
+                            </div>
+                            <div id="cloudmailFields" style="display: none;">
+                                <div class="form-grid-2">
+                                    <div class="form-group">
+                                        <label class="form-label">用户名</label>
+                                        <input type="text" class="form-input" id="cloudmailUsername" placeholder="留空则随机生成">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">收信域名</label>
+                                        <input type="text" class="form-input" id="cloudmailDomain" placeholder="留空用设置里的默认域名">
+                                    </div>
+                                </div>
+                                <div class="form-hint">域名必须是 cloud-mail 服务端 domain 配置里的那一个；地址密码由系统生成并加密保存，删除时会同步删到 cloud-mail。</div>
                             </div>
                             <div id="cloudflareFields" style="display: none;">
                                 <div class="form-grid-2">
@@ -405,6 +428,23 @@
         function toggleTempEmailProvider(provider) {
             // 记录用户选择
             localStorage.setItem('outlook_temp_email_generate', provider);
+
+            // cloud-mail 先统一复位再分支，避免下面三条旧分支 needing to know about it。
+            const cloudmailFields = document.getElementById('cloudmailFields');
+            const labelCloudmail = document.getElementById('providerLabelCloudmail');
+            if (cloudmailFields) cloudmailFields.style.display = 'none';
+            if (labelCloudmail) labelCloudmail.classList.remove('active');
+            if (provider === 'cloudmail') {
+                const gptmailOnly = document.getElementById('gptmailFields');
+                const duckmailOnly = document.getElementById('duckmailFields');
+                const cloudflareOnly = document.getElementById('cloudflareFields');
+                if (gptmailOnly) gptmailOnly.style.display = 'none';
+                if (duckmailOnly) duckmailOnly.style.display = 'none';
+                if (cloudflareOnly) cloudflareOnly.style.display = 'none';
+                if (cloudmailFields) cloudmailFields.style.display = 'block';
+                if (labelCloudmail) labelCloudmail.classList.add('active');
+                return;
+            }
 
             const gptmailFields = document.getElementById('gptmailFields');
             const duckmailFields = document.getElementById('duckmailFields');
@@ -625,6 +665,13 @@
                     }
                     if (!body.password || body.password.length < 6) {
                         showToast('密码至少 6 个字符', 'error');
+                        return;
+                    }
+                } else if (provider === 'cloudmail') {
+                    body.username = (document.getElementById('cloudmailUsername')?.value || '').trim();
+                    body.domain = (document.getElementById('cloudmailDomain')?.value || '').trim();
+                    if (body.username && body.username.length < 3) {
+                        showToast('用户名至少 3 个字符，或留空随机生成', 'error');
                         return;
                     }
                 } else if (provider === 'cloudflare') {

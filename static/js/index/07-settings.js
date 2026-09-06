@@ -1762,6 +1762,109 @@
             }
         }
 
+        // ==================== cloud-mail 临时邮箱设置 ====================
+        // 服务端的 /api/cloudmail/settings 只回“是否已配置”，从不明文回传密码与令牌，
+        // 所以这里也永远不把凭据写进表单或提示文本。
+        async function loadCloudmailSettings() {
+            try {
+                const response = await fetch('/api/cloudmail/settings');
+                const data = await response.json();
+                if (!data || !data.success) return;
+
+                const enabled = document.getElementById('settingsCloudmailEnabled');
+                if (enabled) enabled.checked = !!data.enabled;
+                const baseUrl = document.getElementById('settingsCloudmailBaseUrl');
+                if (baseUrl) baseUrl.value = data.base_url || '';
+                const prefix = document.getElementById('settingsCloudmailApiPrefix');
+                if (prefix) prefix.value = data.api_prefix || '/api';
+                const admin = document.getElementById('settingsCloudmailAdminEmail');
+                if (admin) admin.value = data.admin_email || '';
+                const domain = document.getElementById('settingsCloudmailDomain');
+                if (domain) domain.value = data.domain || '';
+                const password = document.getElementById('settingsCloudmailAdminPassword');
+                if (password) password.value = '';
+                const hint = document.getElementById('settingsCloudmailAdminPasswordHint');
+                if (hint) {
+                    hint.textContent = data.admin_password_configured
+                        ? '已保存管理员密码；留空保持不变，填写即覆盖。'
+                        : '尚未配置管理员密码，拿不到开放接口令牌。';
+                }
+            } catch (error) {
+                // 静默失败：这一项缺席不应影响设置页其余部分。
+            }
+        }
+
+        async function saveCloudmailSettings() {
+            const btn = document.getElementById('saveCloudmailSettingsBtn');
+            const password = (document.getElementById('settingsCloudmailAdminPassword')?.value || '').trim();
+            const body = {
+                enabled: !!document.getElementById('settingsCloudmailEnabled')?.checked,
+                base_url: (document.getElementById('settingsCloudmailBaseUrl')?.value || '').trim(),
+                api_prefix: (document.getElementById('settingsCloudmailApiPrefix')?.value || '/api').trim(),
+                admin_email: (document.getElementById('settingsCloudmailAdminEmail')?.value || '').trim(),
+                domain: (document.getElementById('settingsCloudmailDomain')?.value || '').trim()
+            };
+            // 空密码不下发：服务端的语义是“留空不覆盖”。
+            if (password) body.admin_password = password;
+
+            if (btn) { btn.disabled = true; }
+            try {
+                const response = await fetch('/api/cloudmail/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showToast('cloud-mail 设置已保存', 'success');
+                    if (password) {
+                        const passwordInput = document.getElementById('settingsCloudmailAdminPassword');
+                        if (passwordInput) passwordInput.value = '';
+                    }
+                    await loadCloudmailSettings();
+                } else {
+                    handleApiError(data, '保存 cloud-mail 设置失败');
+                }
+            } catch (error) {
+                showToast('保存 cloud-mail 设置失败', 'error');
+            } finally {
+                if (btn) { btn.disabled = false; }
+            }
+        }
+
+        async function testCloudmailConnection() {
+            const resultBox = document.getElementById('cloudmailTestResult');
+            const resultText = document.getElementById('cloudmailTestResultText');
+            const btn = document.getElementById('testCloudmailBtn');
+            if (btn) { btn.disabled = true; }
+            if (resultBox) { resultBox.style.display = 'block'; }
+            if (resultText) { resultText.textContent = '自检中...'; }
+            try {
+                const response = await fetch('/api/cloudmail/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await response.json();
+                const ok = !!data.success;
+                const message = ok
+                    ? (data.message || 'cloud-mail 连接正常')
+                    : (data.error || 'cloud-mail 自检失败');
+                if (resultText) {
+                    resultText.textContent = message;
+                    resultText.style.color = ok ? '#16a34a' : '#dc2626';
+                }
+                if (!ok) handleApiError(data, 'cloud-mail 自检失败');
+            } catch (error) {
+                if (resultText) {
+                    resultText.textContent = 'cloud-mail 自检失败';
+                    resultText.style.color = '#dc2626';
+                }
+            } finally {
+                if (btn) { btn.disabled = false; }
+            }
+        }
+
         async function loadSettings() {
             ensureForwardingSettingsUI();
             try {
@@ -1840,6 +1943,7 @@
                     syncSmtpProviderUI(false);
                     syncForwardExecutionModeUI();
                     await loadCloudflareChannelsForSettings();
+                    await loadCloudmailSettings();
                     await loadNormalMailRetentionStatus();
                 }
             } catch (error) {

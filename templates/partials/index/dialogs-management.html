@@ -615,6 +615,52 @@
                         </div>
                     </div>
                 </section>
+                <section class="settings-section" id="settingsCloudmailSection">
+                    <div class="settings-section-head">
+                        <span class="settings-section-kicker">cloud-mail</span>
+                        <h4>cloud-mail 临时邮箱设置</h4>
+                        <p>接入自建 maillab/cloud-mail 实例：填接口地址与管理凭证，收信域名必须是该实例 domain 配置里的域。</p>
+                    </div>
+                    <div class="settings-panel settings-panel-grid">
+                        <div class="form-group settings-form-span-full">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="settingsCloudmailEnabled">
+                                <span>启用 cloud-mail 临时邮箱</span>
+                            </label>
+                            <div class="form-hint">关闭时不允许新建 cloud-mail 地址；已建地址仍可读取。</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">服务地址</label>
+                            <input type="text" class="form-input" id="settingsCloudmailBaseUrl" placeholder="https://mail-api.example.com">
+                            <div class="form-hint">必须填接口地址。填成前端页面域名会报“返回的不是 JSON”。</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">接口前缀</label>
+                            <input type="text" class="form-input" id="settingsCloudmailApiPrefix" placeholder="/api">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">管理员邮箱</label>
+                            <input type="text" class="form-input" id="settingsCloudmailAdminEmail" placeholder="admin@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">管理员密码</label>
+                            <input type="password" class="form-input" id="settingsCloudmailAdminPassword" placeholder="留空保持不变">
+                            <div class="form-hint" id="settingsCloudmailAdminPasswordHint">已保存则留空不覆盖。</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">默认收信域名</label>
+                            <input type="text" class="form-input" id="settingsCloudmailDomain" placeholder="example.com">
+                            <div class="form-hint">只填裸域（不带 https://），且必须是 cloud-mail 服务端认可的域。</div>
+                        </div>
+                        <div class="form-group settings-form-span-full cloudflare-channel-actions">
+                            <button class="btn btn-primary" type="button" id="saveCloudmailSettingsBtn" onclick="saveCloudmailSettings()">保存</button>
+                            <button class="btn btn-secondary" type="button" id="testCloudmailBtn" onclick="testCloudmailConnection()">自检</button>
+                        </div>
+                        <div class="form-group settings-form-span-full" id="cloudmailTestResult" style="display: none;">
+                            <div class="form-hint" id="cloudmailTestResultText"></div>
+                        </div>
+                    </div>
+                </section>
                 <section class="settings-section" id="settingsCloudflareSection">
                     <div class="settings-section-head">
                         <span class="settings-section-kicker">Cloudflare</span>
