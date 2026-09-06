@@ -6,6 +6,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Added
+- 临时邮箱新增 **cloud-mail**（maillab/cloud-mail）提供商：走它的开放接口（`genToken` / `addUser` / `emailList`）创建地址并读取邮件；配置项 `cloudmail_*`（服务地址、接口前缀、管理员邮箱/密码、收信域名、开关）与地址密码、令牌均只以密文落库；`/api/cloudmail/settings`、`/api/cloudmail/test` 提供配置与自检，创建与读取复用 `/api/temp-emails` 既有接口。cloud-mail 恒以 HTTP 200 + 信封 `code` 表达业务失败，所以成功与否只看信封而不看状态码；把前端页面域名误填成服务地址时直接报“返回的不是 JSON，请确认填的是接口地址”。详见 [`docs/cloudmail.md`](docs/cloudmail.md)。
+
 ## [3.0.6] - 2026-08-20
 
 ### Added

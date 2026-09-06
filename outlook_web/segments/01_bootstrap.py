@@ -1876,6 +1876,9 @@ def init_db():
         cursor.execute('ALTER TABLE temp_emails ADD COLUMN cloudflare_address_id TEXT')
     if 'cloudflare_channel_id' not in temp_columns:
         cursor.execute('ALTER TABLE temp_emails ADD COLUMN cloudflare_channel_id INTEGER')
+    # cloud-mail（maillab/cloud-mail）渠道：收件地址密码加密存储，读取邮件靠开放接口令牌。
+    if 'cloudmail_password' not in temp_columns:
+        cursor.execute('ALTER TABLE temp_emails ADD COLUMN cloudmail_password TEXT')
 
     cursor.execute("PRAGMA table_info(retained_normal_mail_messages)")
     retained_normal_mail_columns = {row[1] for row in cursor.fetchall()}

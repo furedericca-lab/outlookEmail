@@ -241,7 +241,7 @@ Outlook/Hotmail OAuth 的 IMAP 回退链路默认按 UID 读取详情和附件�
 - 🎭 **系统级外观皮肤** - 支持内置 classic、自定义 zip 皮肤包和 Git 仓库来源；切换后所有登录设备一致
 - ⚡ **性能优化** - 邮件列表与账号列表缓存，分组切换和账号切换更快
 - 📄 **分页加载** - 滚动到底部自动加载下一页（每页20封）
-- 🔥 **临时邮箱** - 集成 GPTMail + DuckMail + Cloudflare Temp Email，多提供商生成、导入、读取、查看详情；Cloudflare 支持多渠道配置，每个 Worker/管理员密码/邮件池独立管理，并按渠道查看全部邮件
+- 🔥 **临时邮箱** - 集成 GPTMail + DuckMail + Cloudflare Temp Email + cloud-mail，多提供商生成、导入、读取、查看详情；Cloudflare 支持多渠道配置，每个 Worker/管理员密码/邮件池独立管理，并按渠道查看全部邮件；cloud-mail 走自建实例的开放接口，见 [cloud-mail 临时邮箱](docs/cloudmail.md)
 - ⚙️ **系统设置** - 在线修改密码、API Key、邮件获取超时等
 - 🔄 **OAuth2 助手** - 内置授权流程，快速获取 Refresh Token
 - 💾 **邮件缓存** - 智能缓存邮件列表，切换即时展示；普通邮箱本地保留默认关闭，可在设置页开启、查看统计并清理本地保留缓存
@@ -628,6 +628,7 @@ curl -H "X-API-Key: your-api-key" \
 | [🎭 外观皮肤](docs/skins.md) | 系统级皮肤、zip 上传、Git 仓库来源、皮肤包格式与持久化说明 |
 | [📡 API 文档](docs/api.md) | 对外简易API、完整API、代理配置 |
 | [🛠️ 故障排查](docs/troubleshooting.md) | 常见问题、故障排查步骤 |
+| [📮 cloud-mail 临时邮箱](docs/cloudmail.md) | 把自建 cloud-mail 接成临时邮箱提供商：配置、使用与边界 |
 | [📋 更新日志](CHANGELOG.md) | 版本更新历史 |
 | [🚢 发版说明](RELEASE.md) | 标准发版步骤、版本号规则、GitHub Release 说明 |
 | [🛡️ 分支保护建议](BRANCH_PROTECTION.md) | main/dev 使用边界、保护规则与构建触发建议 |

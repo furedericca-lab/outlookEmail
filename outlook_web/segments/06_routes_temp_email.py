@@ -1387,20 +1387,22 @@ def add_temp_email(email_addr: str, provider: str = 'gptmail',
                    duckmail_token: str = None, duckmail_account_id: str = None,
                    duckmail_password: str = None,
                    cloudflare_address_id: str = None,
-                   cloudflare_channel_id: Optional[int] = None) -> bool:
+                   cloudflare_channel_id: Optional[int] = None,
+                   cloudmail_password: str = None) -> bool:
     """添加临时邮箱"""
     db = get_db()
     try:
         db.execute('''INSERT INTO temp_emails (
                         email, provider, duckmail_token, duckmail_account_id, duckmail_password,
-                        cloudflare_address_id, cloudflare_channel_id
-                      ) VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                        cloudflare_address_id, cloudflare_channel_id, cloudmail_password
+                      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
                    (email_addr, provider,
                     encrypt_data(duckmail_token) if duckmail_token else None,
                     duckmail_account_id,
                     encrypt_data(duckmail_password) if duckmail_password else None,
                     cloudflare_address_id,
-                    cloudflare_channel_id))
+                    cloudflare_channel_id,
+                    encrypt_data(cloudmail_password) if cloudmail_password else None))
         db.commit()
         return True
     except sqlite3.IntegrityError:
@@ -1490,6 +1492,10 @@ def cleanup_temp_email_provider_resource(temp_email: Optional[Dict]) -> None:
         account_id = temp_email.get('duckmail_account_id', '')
         if token and account_id:
             duckmail_delete_account(token, account_id)
+    elif provider == 'cloudmail':
+        # cloud-mail 的开放接口只提供了建号与查邮件，没有删除地址的接口，
+        # 所以本地删除不会同步上游；需要回收时到 cloud-mail 管理端处理。
+        logging.info('cloud-mail 地址 %s 无上游删除接口，仅删除本地记录', email_addr)
     elif provider == 'cloudflare':
         channel = get_cloudflare_channel_for_temp_email(temp_email)
         address_id = temp_email.get('cloudflare_address_id', '')
@@ -2295,6 +2301,23 @@ def api_generate_temp_email():
             return jsonify({'success': True, 'email': email_addr, 'message': 'DuckMail 临时邮箱创建成功'})
         else:
             return jsonify({'success': False, 'error': '邮箱已存在'})
+    elif provider == 'cloudmail':
+        if not is_cloudmail_enabled():
+            return jsonify({'success': False, 'error': 'cloud-mail 渠道未启用，请先在邮箱设置中开启'})
+
+        domain = str(data.get('domain') or '').strip() or get_cloudmail_domain()
+        username = str(data.get('username') or '').strip() or None
+        created = cloudmail_create_address(username=username, domain=domain)
+        if not created.get('success'):
+            return jsonify({'success': False, 'error': created.get('error', '创建 cloud-mail 临时邮箱失败')})
+
+        email_addr = created.get('address')
+        # 上游建号与本地入库不是一个事务，和 DuckMail 分支一样存在“上游已建、本地入库失败”
+        # 的窗口；失败时把地址回给用户，便于手工处理，不要隐式删除上游地址。
+        if add_temp_email(email_addr, provider='cloudmail',
+                          cloudmail_password=created.get('password')):
+            return jsonify({'success': True, 'email': email_addr, 'message': 'cloud-mail 临时邮箱创建成功'})
+        return jsonify({'success': False, 'error': f'地址已在 cloud-mail 创建，但本地记录已存在: {email_addr}'})
     elif provider == 'cloudflare':
         channel_id = data.get('channel_id')
         channel = (
@@ -2573,6 +2596,13 @@ def api_get_temp_email_messages(email_addr):
             'count': len(formatted),
             'method': 'DuckMail'
         })
+    elif provider == 'cloudmail':
+        fetch_result = fetch_cloudmail_temp_messages(email_addr, temp_email)
+        if not fetch_result.get('success'):
+            return jsonify({'success': False, 'error': fetch_result.get('error', '获取 cloud-mail 邮件失败')})
+        unified_messages = fetch_result.get('messages', [])
+        save_temp_email_messages(email_addr, unified_messages)
+        return build_cloudmail_messages_response(unified_messages)
     elif provider == 'cloudflare':
         fetch_result = fetch_cloudflare_temp_messages(email_addr, temp_email)
         if not fetch_result.get('success'):
@@ -2696,6 +2726,30 @@ def api_get_temp_email_message_detail(email_addr, message_id):
             })
         else:
             return jsonify({'success': False, 'error': '获取邮件详情失败'})
+    elif provider == 'cloudmail':
+        msg = get_temp_email_message_by_id(message_id)
+        if not msg:
+            fetch_result = fetch_cloudmail_temp_messages(email_addr, temp_email)
+            if not fetch_result.get('success'):
+                return jsonify({'success': False, 'error': fetch_result.get('error', '获取 cloud-mail 邮件失败')})
+            save_temp_email_messages(email_addr, fetch_result.get('messages', []))
+            msg = get_temp_email_message_by_id(message_id)
+
+        if not msg:
+            return jsonify({'success': False, 'error': '邮件不存在'})
+        return jsonify({
+            'success': True,
+            'email': {
+                'id': msg.get('message_id'),
+                'from': msg.get('from_address', '未知'),
+                'to': email_addr,
+                'subject': msg.get('subject', '无主题'),
+                'body': msg.get('html_content') if msg.get('has_html') else msg.get('content', ''),
+                'body_type': 'html' if msg.get('has_html') else 'text',
+                'date': msg.get('created_at', ''),
+                'timestamp': msg.get('timestamp', 0),
+            }
+        })
     elif provider == 'cloudflare':
         msg = get_temp_email_message_by_id(message_id)
 
@@ -2819,6 +2873,13 @@ def api_refresh_temp_email_messages(email_addr):
             })
         else:
             return jsonify({'success': False, 'error': '获取 DuckMail 邮件失败'})
+    elif provider == 'cloudmail':
+        fetch_result = fetch_cloudmail_temp_messages(email_addr, temp_email)
+        if not fetch_result.get('success'):
+            return jsonify({'success': False, 'error': fetch_result.get('error', '获取 cloud-mail 邮件失败')})
+        unified_messages = fetch_result.get('messages', [])
+        saved = save_temp_email_messages(email_addr, unified_messages)
+        return build_cloudmail_messages_response(unified_messages, new_count=saved)
     elif provider == 'cloudflare':
         fetch_result = fetch_cloudflare_temp_messages(email_addr, temp_email)
         if not fetch_result.get('success'):
