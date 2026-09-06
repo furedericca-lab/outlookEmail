@@ -82,6 +82,10 @@ POST /api/cloudmail/attach {"emails": ["box01@mail.example"]}   # 也支持单�
   代码以 `cloudmail_password` 是否为空作为“谁建的”硬开关，不是靠约定；
 - 幂等：重复导入返回 `already_attached`；已被其它 provider 占用的地址拒绝；不属于配置的收信域则拒绝。
 
+## 批量生成
+
+生成弹窗里的 cloud-mail 与 Cloudflare 是同一套控件与通路：数量（1-50）、用户名列表（一行一个，填了就必须与数量一致，只允许小写字母、数字、点、下划线、短横线）、绑定标签、可选收信域名（留空用设置里的默认域）。提交统一打到 `/api/temp-emails/generate-batch`，响应字段与 Cloudflare 批量一致，所以部分失败摘要、提示与列表刷新两边共用。校验发生在上游调用之前；上游按条建号，某条失败会带序号进 `failures`，同批其余地址照常创建。批量生成的地址也带系统生成口令，删除时会同步删到 cloud-mail。
+
 ## 分页
 
 `emailList` 只有页码 `num` 与页大小 `size`（服务端把 `size` 卡在 50），没有 offset，适配器负责把
