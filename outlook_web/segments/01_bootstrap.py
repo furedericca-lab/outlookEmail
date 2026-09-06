@@ -1493,6 +1493,49 @@ def init_db():
         )
     ''')
 
+    cursor.execute('PRAGMA index_list(temp_email_messages)')
+    temp_message_indexes = cursor.fetchall()
+    legacy_message_unique = False
+    for index_row in temp_message_indexes:
+        index_name = index_row[1]
+        index_is_unique = bool(index_row[2])
+        index_origin = index_row[3] if len(index_row) > 3 else ''
+        if not index_is_unique:
+            continue
+        index_columns = [column[2] for column in cursor.execute(
+            'PRAGMA index_info(%s)' % index_name).fetchall()]
+        if index_origin in ('u', 'pk', 'uk') and index_columns == ['message_id']:
+            legacy_message_unique = True
+    if legacy_message_unique:
+        # 旧结构把 message_id 设成全局单列 UNIQUE，而各提供商的消息 id 是各自编号
+        # （cloud-mail 就是裸自增整数），两个邮箱重号时 INSERT OR REPLACE 会静默
+        # 覆盖掉另一个邮箱已缓存的正文。唯一键必须是（邮箱, 消息 id）。
+        cursor.execute('ALTER TABLE temp_email_messages RENAME TO temp_email_messages_old')
+        cursor.execute('''
+            CREATE TABLE temp_email_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT NOT NULL,
+                email_address TEXT NOT NULL,
+                from_address TEXT,
+                subject TEXT,
+                content TEXT,
+                html_content TEXT,
+                has_html INTEGER DEFAULT 0,
+                timestamp INTEGER,
+                raw_content TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (email_address, message_id),
+                FOREIGN KEY (email_address) REFERENCES temp_emails (email)
+            )
+        ''')
+        cursor.execute('''
+            INSERT OR REPLACE INTO temp_email_messages
+            (id, message_id, email_address, from_address, subject, content, html_content, has_html, timestamp, raw_content, created_at)
+            SELECT id, message_id, email_address, from_address, subject, content, html_content, has_html, timestamp, raw_content, created_at
+            FROM temp_email_messages_old ORDER BY id
+        ''')
+        cursor.execute('DROP TABLE temp_email_messages_old')
+
     # 创建账号刷新记录表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS account_refresh_logs (

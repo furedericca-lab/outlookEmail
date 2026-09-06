@@ -9,6 +9,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ### Added
 - 临时邮箱新增 **cloud-mail**（maillab/cloud-mail）提供商：走它的开放接口（`genToken` / `addUser` / `emailList`）创建地址并读取邮件；配置项 `cloudmail_*`（服务地址、接口前缀、管理员邮箱/密码、收信域名、开关）与地址密码、令牌均只以密文落库；`/api/cloudmail/settings`、`/api/cloudmail/test` 提供配置与自检，创建与读取复用 `/api/temp-emails` 既有接口。cloud-mail 恒以 HTTP 200 + 信封 `code` 表达业务失败，所以成功与否只看信封而不看状态码；把前端页面域名误填成服务地址时直接报“返回的不是 JSON，请确认填的是接口地址”。删除地址走管理员登录态（`/login` 取 JWT、`/user/list` 解析 userId、`/user/delete` 硬删除）：因为 `user/list` 的 email 是前缀 LIKE，适配器会在本地再精确比一次，命中不唯一或目标就是管理员自身时一律拒删，上游删除失败只记 WARNING 不阻断本地删除。`emailList` 只有页码没有 offset，由适配器把 `limit/offset` 折算成页码（对齐时一次请求，不对齐时最多逐页走 10 页再切片）。界面同步接入：设置页新增「cloud-mail 临时邮箱设置」卡片。后续修正了两处可达性缺陷（侧边栏入口、渠道筛选标签），并新增**导入实例里已有邮箱**的能力：`GET /api/cloudmail/accounts` 按 cloud-mail 的真实模型读 `account` 表（`user` 只是登录身份，一个 user 管多个邮箱），`POST /api/cloudmail/attach` 只建立本地关联——不生成也不存储该邮箱口令，读邮件依赖实例级 `public/emailList`；删除时以 `cloudmail_password` 是否为空作为“谁建的”硬开关，导入的邮箱永不触发上游删除（启用、服务地址、接口前缀、管理员邮箱/密码、默认收信域名，带保存与自检；密码框不预填也不回传已存凭据，留空语义为“保持不变”），生成临时邮箱弹窗新增 `cloud-mail` 选项卡（用户名可留空随机生成、域名可覆盖默认值），列表也按 `cloud-mail` 标签展示而不是一律退回成 GPTMail。详见 [`docs/cloudmail.md`](docs/cloudmail.md)。
 
+### Fixed
+- 临时邮箱**邮件正文缓存的唯一键从 `message_id` 改为 `(email_address, message_id)`**。原结构 `message_id TEXT UNIQUE` 是全局唯一，而各提供商的消息编号互不相干（cloud-mail 是裸自增整数），两个邮箱重号时 `INSERT OR REPLACE` 会静默覆盖另一个邮箱已缓存的正文，且按 id 单键查找会返回“先进表那一行”——表现是列表里有信、点开却没有正文或内容不对。`init_db()` 会检测旧的单列 UNIQUE 索引并原地重建表（去重保留同键最新行），详情与缓存读写改为按（邮箱, 消息 id）两维定位。
+- 邮件列表不再把 `method: 'cloud-mail'` 兼顶成 `gptmail`：`currentMethod` 决定刷新、列表缓存键、发件人显示与标签颜色，兼顶会让 cloud-mail 走全套 GPTMail 逻辑；现在显式映射到 `cloudmail` 并有自己的标签色。
+
 ## [3.0.6] - 2026-08-20
 
 ### Added

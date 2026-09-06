@@ -1555,9 +1555,25 @@ def get_temp_email_messages(email_addr: str) -> List[Dict]:
 
 
 def get_temp_email_message_by_id(message_id: str) -> Optional[Dict]:
-    """根据 ID 获取临时邮件"""
+    """根据 ID 获取临时邮件
+
+    注意：这个查找不带邮箱作用域。不同提供商的消息 id 可能完全相同（cloud-mail 就是
+    裸自增整数），所以一旦两个邮箱缓存了同一个 id，这里会返回“先进表的那一个”。
+    需要准确区分时使用 get_temp_email_message_by_id_for_address()。
+    """
     db = get_db()
     cursor = db.execute('SELECT * FROM temp_email_messages WHERE message_id = ?', (message_id,))
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
+def get_temp_email_message_by_id_for_address(message_id: str, email_addr: str) -> Optional[Dict]:
+    """按（邮箱, 消息 id）两维查找，避免跨邮箱同 id 撞车。"""
+    db = get_db()
+    cursor = db.execute(
+        'SELECT * FROM temp_email_messages WHERE message_id = ? AND email_address = ?',
+        (str(message_id), str(email_addr))
+    )
     row = cursor.fetchone()
     return dict(row) if row else None
 
@@ -2677,7 +2693,7 @@ def api_get_temp_email_message_detail(email_addr, message_id):
 
     if provider == 'duckmail':
         # 先检查本地缓存
-        msg = get_temp_email_message_by_id(message_id)
+        msg = get_temp_email_message_by_id_for_address(message_id, email_addr)
 
         # 如果有 HTML 内容直接返回本地缓存
         if msg and msg.get('has_html') and msg.get('html_content'):
@@ -2737,13 +2753,15 @@ def api_get_temp_email_message_detail(email_addr, message_id):
         else:
             return jsonify({'success': False, 'error': '获取邮件详情失败'})
     elif provider == 'cloudmail':
-        msg = get_temp_email_message_by_id(message_id)
+        # 必须按（邮箱, id）两维查：cloud-mail 的消息 id 是裸自增整数，与别的提供商
+        # 完全可能重号，只看 id 会把另一个邮箱的行当成这封返回，表现是列表有、点开无正文。
+        msg = get_temp_email_message_by_id_for_address(message_id, email_addr)
         if not msg:
             fetch_result = fetch_cloudmail_temp_messages(email_addr, temp_email)
             if not fetch_result.get('success'):
                 return jsonify({'success': False, 'error': fetch_result.get('error', '获取 cloud-mail 邮件失败')})
             save_temp_email_messages(email_addr, fetch_result.get('messages', []))
-            msg = get_temp_email_message_by_id(message_id)
+            msg = get_temp_email_message_by_id_for_address(message_id, email_addr)
 
         if not msg:
             return jsonify({'success': False, 'error': '邮件不存在'})
@@ -2761,14 +2779,14 @@ def api_get_temp_email_message_detail(email_addr, message_id):
             }
         })
     elif provider == 'cloudflare':
-        msg = get_temp_email_message_by_id(message_id)
+        msg = get_temp_email_message_by_id_for_address(message_id, email_addr)
 
         if not msg:
             fetch_result = fetch_cloudflare_temp_messages(email_addr, temp_email)
             if not fetch_result.get('success'):
                 return jsonify({'success': False, 'error': fetch_result.get('error', '获取 Cloudflare 邮件失败')})
             save_temp_email_messages(email_addr, fetch_result.get('messages', []))
-            msg = get_temp_email_message_by_id(message_id)
+            msg = get_temp_email_message_by_id_for_address(message_id, email_addr)
 
         if msg:
             return jsonify({
@@ -2787,13 +2805,13 @@ def api_get_temp_email_message_detail(email_addr, message_id):
         return jsonify({'success': False, 'error': '邮件不存在'})
     else:
         # GPTMail: 保持原有逻辑
-        msg = get_temp_email_message_by_id(message_id)
+        msg = get_temp_email_message_by_id_for_address(message_id, email_addr)
 
         if not msg:
             api_msg = get_temp_email_detail_from_api(message_id)
             if api_msg:
                 save_temp_email_messages(email_addr, [api_msg])
-                msg = get_temp_email_message_by_id(message_id)
+                msg = get_temp_email_message_by_id_for_address(message_id, email_addr)
 
         if msg:
             return jsonify({

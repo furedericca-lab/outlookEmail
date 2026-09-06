@@ -59,6 +59,13 @@ class CloudmailListFilterFrontendTests(unittest.TestCase):
         self.assertIn('data-provider="cloudmail"', LAYOUT)
         self.assertIn("filterTempEmailByProvider('cloudmail')", LAYOUT)
 
+    def test_the_ui_does_not_collapse_cloudmail_into_gptmail(self):
+        # The list used to fall through to gptmail for any unhandled method label, which
+        # then drove every currentMethod-dependent branch (refresh, cache key, colours)
+        # with the wrong provider.
+        self.assertIn("'cloud-mail': 'cloudmail'", TEMP_EMAILS_JS)
+        self.assertIn('cloudmail: \'#3b82f6\'', TEMP_EMAILS_JS)
+
     def test_the_empty_state_names_cloudmail_instead_of_gptmail(self):
         # Without this branch an empty cloud-mail filter reads "no GPTMail mailboxes".
         self.assertIn("filter === 'cloudmail' ? 'cloud-mail' : 'GPTMail')", TEMP_EMAILS_JS)

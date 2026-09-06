@@ -1147,16 +1147,23 @@
 
                 if (data.success) {
                     currentEmails = data.emails;
-                    currentMethod = data.method === 'DuckMail'
-                        ? 'duckmail'
-                        : (data.method === 'Cloudflare' ? 'cloudflare' : 'gptmail');
+                    // 不能靠“其他就是 gptmail”兼顶：cloud-mail 报 'cloud-mail'，兼顶成
+                    // gptmail 会让后面所有按 currentMethod 分支的逻辑（刷新、缓存键、发件人
+                    // 显示、颜色）全部走错提供商。
+                    const tempMethodByName = {
+                        'duckmail': 'duckmail',
+                        'cloudflare': 'cloudflare',
+                        'cloud-mail': 'cloudmail',
+                        'cloudmail': 'cloudmail',
+                        'gptmail': 'gptmail'
+                    };
+                    currentMethod = tempMethodByName[String(data.method || '').toLowerCase()] || 'gptmail';
 
                     const methodTag = document.getElementById('methodTag');
                     methodTag.textContent = data.method || 'GPTMail';
                     methodTag.style.display = 'inline';
-                    methodTag.style.backgroundColor = data.method === 'DuckMail'
-                        ? '#ff9800'
-                        : (data.method === 'Cloudflare' ? '#f48120' : '#00bcf2');
+                    const methodTagColors = { duckmail: '#ff9800', cloudflare: '#f48120', cloudmail: '#3b82f6' };
+                    methodTag.style.backgroundColor = methodTagColors[currentMethod] || '#00bcf2';
                     methodTag.style.color = 'white';
 
                     document.getElementById('emailCount').textContent = `(${data.count})`;
