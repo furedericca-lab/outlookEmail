@@ -630,7 +630,7 @@ MAIL_PROVIDERS = {
     "sina": {
         # 一个提供商收多个后缀（与 qq 同时吃 qq.com/foxmail.com 同构）。区别在于新浪两个
         # 后缀是各自独立的服务器，所以主机按地址域名解析，而不是固定用第一台。
-        "label": "Sina (@sina.com / @sina.cn)",
+        "label": "Sina",
         "imap_host": "imap.sina.com",
         "imap_port": 993,
         "account_type": "imap",

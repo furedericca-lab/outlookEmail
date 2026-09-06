@@ -34,12 +34,10 @@ class SinaProviderTests(unittest.TestCase):
         self.assertIsNotNone(meta)
         self.assertNotIn('sina-cn', web_outlook_app.MAIL_PROVIDERS,
                          '两个后缀是一个提供商的两个域名，不是两个提供商（与 qq/foxmail 同构）')
-        self.assertTrue(meta['label'].startswith('Sina'), '品牌按运营方要求写成 Sina')
+        self.assertEqual(meta['label'], 'Sina',
+                         '运营方要求下拉里只写 Sina，服务器与后缀细节留在提示文案里')
         self.assertEqual(meta['imap_port'], 993)
         self.assertEqual(meta['account_type'], 'imap')
-        # 标签必须把两个后缀都写出来，否则用户不知道该不该选它。
-        self.assertIn('@sina.com', meta['label'])
-        self.assertIn('@sina.cn', meta['label'])
 
     def test_both_suffixes_infer_the_same_provider(self):
         for domain in SINA_DOMAIN_HOSTS:
