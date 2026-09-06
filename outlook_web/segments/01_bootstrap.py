@@ -627,6 +627,18 @@ MAIL_PROVIDERS = {
         "imap_port": 993,
         "account_type": "imap",
     },
+    "sina": {
+        # 一个提供商收多个后缀（与 qq 同时吃 qq.com/foxmail.com 同构）。区别在于新浪两个
+        # 后缀是各自独立的服务器，所以主机按地址域名解析，而不是固定用第一台。
+        "label": "Sina (@sina.com / @sina.cn)",
+        "imap_host": "imap.sina.com",
+        "imap_port": 993,
+        "account_type": "imap",
+        "domain_hosts": {
+            "sina.com": "imap.sina.com",
+            "sina.cn": "imap.sina.cn",
+        },
+    },
     "custom": {
         "label": "自定义 IMAP",
         "imap_host": "",
@@ -652,6 +664,8 @@ DOMAIN_PROVIDER_MAP = {
     "aliyun.com": "aliyun",
     "alimail.com": "aliyun",
     "2925.com": "2925",
+    "sina.com": "sina",
+    "sina.cn": "sina",
 }
 
 PROVIDER_FOLDER_MAP = {
@@ -825,12 +839,24 @@ def normalize_provider(provider: str, email_addr: str = '') -> str:
         provider = infer_provider_from_email(email_addr) if email_addr else 'outlook'
     if provider not in MAIL_PROVIDERS:
         provider = 'custom'
+    # 域名推理出明确提供商时以地址域名为准：新浪的 @sina.com 与 @sina.cn 是各自独立的主机，163/126 同理，
+    # 照拄下拉框选择会静默连到另一个后缀的服务器。未知域名仍保留用户所选（例如挂在自有
+    # 域名上的 Google Workspace / Outlook 商业邮箱）。
+    if provider != 'custom' and email_addr and '@' in email_addr:
+        inferred_from_domain = infer_provider_from_email(email_addr)
+        if (inferred_from_domain != 'custom' and inferred_from_domain != provider
+                and inferred_from_domain in MAIL_PROVIDERS):
+            provider = inferred_from_domain
     return provider
 
 
 def get_provider_meta(provider: str, email_addr: str = '') -> Dict[str, Any]:
     provider_key = normalize_provider(provider, email_addr)
     meta = dict(MAIL_PROVIDERS.get(provider_key, MAIL_PROVIDERS['custom']))
+    domain_hosts = meta.get('domain_hosts') or {}
+    domain = str(email_addr or '').rsplit('@')[-1].strip().lower()
+    if domain_hosts.get(domain):
+        meta['imap_host'] = domain_hosts[domain]
     meta['key'] = provider_key
     return meta
 

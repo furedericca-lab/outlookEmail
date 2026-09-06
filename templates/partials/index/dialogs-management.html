@@ -495,6 +495,7 @@
                                             <option value="126">126邮箱</option>
                                             <option value="yahoo">Yahoo</option>
                                             <option value="aliyun">阿里邮箱</option>
+                                            <option value="sina">Sina (@sina.com / @sina.cn)</option>
                                             <option value="custom">自定义</option>
                                         </select>
                                         <div class="form-hint" id="settingsSmtpProviderHint">选择后会自动带出 SMTP 主机、端口和连接方式，你仍然可以继续手动修改。</div>
@@ -505,7 +506,7 @@
                                     </div>
                                     <div class="form-group forward-field">
                                         <label class="form-label">发件人邮箱</label>
-                                        <input type="text" class="form-input" id="settingsSmtpFromEmail" placeholder="noreply@example.com">
+                                        <input type="text" class="form-input" id="settingsSmtpFromEmail" placeholder="noreply@example.com" onchange="syncSmtpProviderUI(false)">
                                         <div class="form-hint" id="settingsSmtpFromEmailHint">可选。留空时默认使用 SMTP 用户名作为发件人邮箱。</div>
                                     </div>
                                     <div class="form-group forward-field">

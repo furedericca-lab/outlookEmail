@@ -2036,6 +2036,7 @@
             yahoo: 'Yahoo',
             aliyun: 'Aliyun',
             '2925': '2925邮箱',
+            sina: 'Sina',
             custom: 'Custom IMAP'
         };
 
@@ -2111,7 +2112,7 @@
             }
         }
 
-        const SMTP_FORWARD_PROVIDER_OPTIONS = ['outlook', 'qq', '163', '126', 'yahoo', 'aliyun', 'custom'];
+        const SMTP_FORWARD_PROVIDER_OPTIONS = ['outlook', 'qq', '163', '126', 'yahoo', 'aliyun', 'sina', 'custom'];
 
         function normalizeSmtpForwardProvider(value) {
             const provider = String(value || '').trim().toLowerCase();
@@ -2125,6 +2126,7 @@
             '126': { host: 'smtp.126.com', port: '465', useTls: false, useSsl: true, hint: '126 邮箱通常使用 SMTP 授权码，默认 SSL 465。' },
             yahoo: { host: 'smtp.mail.yahoo.com', port: '465', useTls: false, useSsl: true, hint: 'Yahoo 默认 SSL 465。' },
             aliyun: { host: 'smtp.aliyun.com', port: '465', useTls: false, useSsl: true, hint: '阿里邮箱默认 SSL 465。' },
+            sina: { host: 'smtp.sina.com', port: '465', useTls: false, useSsl: true, domainHosts: { 'sina.com': 'smtp.sina.com', 'sina.cn': 'smtp.sina.cn' }, hint: 'Sina 邮箱使用 SMTP 授权码：@sina.com 走 smtp.sina.com，@sina.cn 走 smtp.sina.cn（按发件人邮箱自动带出），默认 SSL 465，也支持 587 STARTTLS。' },
             custom: { host: '', port: '465', useTls: false, useSsl: true, hint: '自定义模式下，请手动填写 SMTP 主机、端口和连接方式。' }
         };
 
@@ -2149,14 +2151,27 @@
             const preset = SMTP_PROVIDER_PRESETS[provider] || SMTP_PROVIDER_PRESETS.custom;
 
             if (applyPreset) {
-                hostInput.value = preset.host;
+                hostInput.value = smtpHostForPreset(preset);
                 portInput.value = preset.port;
                 useTlsInput.checked = !!preset.useTls;
                 useSslInput.checked = !!preset.useSsl;
+            } else if (preset.domainHosts && Object.values(preset.domainHosts).includes(hostInput.value.trim())) {
+                // 发件人邮箱改了就把主机刷新成对应后缀那台；只动我们管得着的主机，
+                // 用户手填的其他主机不覆盖。
+                hostInput.value = smtpHostForPreset(preset);
             }
 
             providerHint.textContent = preset.hint;
             fromHint.textContent = '可选。留空时默认使用 SMTP 用户名作为发件人邮箱。';
+        }
+
+        function smtpHostForPreset(preset) {
+            // 一个提供商可能有多台按后缀区分的服务器（Sina 的 @sina.com 与 @sina.cn），
+            // 所以主机跟着真实发件地址走，而不是永远用预设里第一台。
+            const domainHosts = (preset && preset.domainHosts) || {};
+            const fromEmail = String((document.getElementById('settingsSmtpFromEmail') || {}).value || '').trim().toLowerCase();
+            const domain = fromEmail.includes('@') ? fromEmail.split('@').pop() : '';
+            return domainHosts[domain] || (preset && preset.host) || '';
         }
 
         function updateEditAccountFields() {

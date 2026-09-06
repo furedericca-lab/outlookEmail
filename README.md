@@ -1,6 +1,6 @@
 # 多邮箱邮件管理工具
 
-一个面向多邮箱账号场景的邮件管理工具，支持通过 Outlook/Hotmail OAuth、Microsoft Graph API 和标准 IMAP 统一读取、管理和转发邮件，并提供 Web 界面、Chrome/Edge 浏览器扩展，用于分组管理、账号管理、邮件查看和对外 API 调用。当前支持 Outlook/Hotmail、Gmail、QQ、163、126、Yahoo、阿里邮箱以及自定义 IMAP 邮箱，同时集成 GPTMail、DuckMail、Cloudflare Temp Email 多提供商临时邮箱能力。
+一个面向多邮箱账号场景的邮件管理工具，支持通过 Outlook/Hotmail OAuth、Microsoft Graph API 和标准 IMAP 统一读取、管理和转发邮件，并提供 Web 界面、Chrome/Edge 浏览器扩展，用于分组管理、账号管理、邮件查看和对外 API 调用。当前支持 Outlook/Hotmail、Gmail、QQ、163、126、Yahoo、阿里邮箱、Sina（@sina.com、@sina.cn）以及自定义 IMAP 邮箱，同时集成 GPTMail、DuckMail、Cloudflare Temp Email 多提供商临时邮箱能力。
 
 注意：改密码会导致auth失效，需要重新授权
 ## 📦 快速开始
@@ -207,7 +207,7 @@ docker compose -f docker-compose.build.yml down
 
 1. **Outlook/Hotmail OAuth + Graph API** - 优先方式，适合 Outlook / Hotmail / Live 账号
 2. **Outlook/Hotmail OAuth + IMAP 回退** - `outlook.live.com` / `outlook.office365.com`
-3. **标准 IMAP** - 适用于 Gmail、QQ、163、126、Yahoo、阿里邮箱和自定义 IMAP
+3. **标准 IMAP** - 适用于 Gmail、QQ、163、126、Yahoo、阿里邮箱、Sina 和自定义 IMAP
 
 #### 普通邮箱本地保留行为与限制
 
@@ -378,7 +378,7 @@ user@outlook.com----password123----24d9a0ed-8787-4584-883c-2fd79308940a----0.AXE
 
 #### 标准 IMAP 邮箱
 
-适用于 Gmail、QQ、163、126、Yahoo、阿里邮箱等：
+适用于 Gmail、QQ、163、126、Yahoo、阿里邮箱、Sina 等：
 
 ```txt
 邮箱----IMAP授权码/应用密码
