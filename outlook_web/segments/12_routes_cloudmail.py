@@ -602,3 +602,104 @@ def api_cloudmail_attach():
         'failed': failed,
         'items': items,
     })
+
+
+CLOUDMAIL_BATCH_GENERATE_MAX_COUNT = 50
+CLOUDMAIL_USERNAME_RE = re.compile(r'^[a-z0-9][a-z0-9._-]{1,28}$')
+
+
+def cloudmail_normalize_batch_usernames(data: Dict[str, Any],
+                                        count: int) -> tuple[List[str], str]:
+    """把批量用户名入参收拾成列表；给了就必须与数量一致且逐个合法。
+
+    与 Cloudflare 批量同规则，而不是"多出来就默默截断"，否则用户会以为多写的名字生效了。
+    """
+    raw = data.get('usernames')
+    if isinstance(raw, str):
+        raw = re.split(r'\r?\n', raw)
+    names = [str(item).strip().lower() for item in (raw or []) if str(item or '').strip()]
+    if not names:
+        return [], ''
+    if len(names) != count:
+        return [], '用户名数量必须与创建数量一致'
+    for name in names:
+        if not CLOUDMAIL_USERNAME_RE.match(name):
+            return [], '用户名不合法（小写字母/数字/点/下划线/短横线，长度 3-30）: %s' % name
+    return names, ''
+
+
+def generate_cloudmail_temp_emails_batch(data: Dict[str, Any]) -> Dict[str, Any]:
+    """批量生成 cloud-mail 临时邮箱。
+
+    响应形状与 Cloudflare 批量完全一致（emails/created_count/failed_count/failures/
+    tagged_count/message），所以前端提交与提示逻辑不必为 cloud-mail 再写一套。
+    """
+    if not is_cloudmail_enabled():
+        return {'success': False, 'error': 'cloud-mail 渠道未启用，请先在邮箱设置中开启'}
+
+    try:
+        count = int(data.get('count', 1))
+    except (TypeError, ValueError):
+        count = 0
+    if count < 1 or count > CLOUDMAIL_BATCH_GENERATE_MAX_COUNT:
+        return {'success': False,
+                'error': '数量必须在 1-%d 之间' % CLOUDMAIL_BATCH_GENERATE_MAX_COUNT}
+
+    domain = str(data.get('domain') or '').strip().lower() or get_cloudmail_domain()
+    if not domain:
+        return {'success': False, 'error': '请先在设置里填写默认收信域名'}
+
+    usernames, username_error = cloudmail_normalize_batch_usernames(data, count)
+    if username_error:
+        return {'success': False, 'error': username_error}
+
+    created_emails: List[str] = []
+    created_temp_email_ids: List[int] = []
+    failures: List[Dict[str, Any]] = []
+
+    for index in range(count):
+        username = usernames[index] if usernames else None
+        result = cloudmail_create_address(username=username, domain=domain)
+        if not result.get('success'):
+            failures.append({
+                'index': index + 1,
+                'username': username or '',
+                'error': result.get('error', '创建 cloud-mail 临时邮箱失败'),
+            })
+            continue
+
+        email_addr = result.get('address')
+        # 上游建号与本地入库不在一个事务里（与单条生成、DuckMail 分支一致）：入库失败时
+        # 把地址原样报给用户，绝不隐式删除上游地址。
+        if not add_temp_email(email_addr, provider='cloudmail',
+                              cloudmail_password=result.get('password')):
+            failures.append({
+                'index': index + 1,
+                'username': username or '',
+                'email': email_addr,
+                'error': '地址已在 cloud-mail 创建，但本地记录已存在',
+            })
+            continue
+
+        created_emails.append(email_addr)
+        created_temp_email = get_temp_email_by_address(email_addr)
+        if created_temp_email:
+            created_temp_email_ids.append(int(created_temp_email['id']))
+
+    tagged_count = bind_temp_email_tags(created_temp_email_ids, data.get('tag_ids', [])) or 0
+    failed_count = count - len(created_emails)
+    payload = {
+        'success': bool(created_emails),
+        'emails': created_emails,
+        'created_count': len(created_emails),
+        'failed_count': failed_count,
+        'failures': failures,
+        'tagged_count': tagged_count,
+    }
+
+    if created_emails:
+        payload['message'] = '已创建 %d 个 cloud-mail 临时邮箱' % len(created_emails)
+        return payload
+
+    payload['error'] = failures[0]['error'] if failures else '创建 cloud-mail 临时邮箱失败'
+    return payload

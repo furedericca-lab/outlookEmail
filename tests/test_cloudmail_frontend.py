@@ -59,6 +59,20 @@ class CloudmailListFilterFrontendTests(unittest.TestCase):
         self.assertIn('data-provider="cloudmail"', LAYOUT)
         self.assertIn("filterTempEmailByProvider('cloudmail')", LAYOUT)
 
+    def test_cloudmail_gets_the_same_batch_controls_as_cloudflare(self):
+        # The cloud-mail tab used to be two free-text boxes with no count, no username
+        # list and no tag binding, so the shared batch submit path silently excluded it.
+        self.assertIn('id="cloudmailGenerateCount"', TEMP_EMAILS_JS)
+        self.assertIn('id="cloudmailGenerateTagOptions"', TEMP_EMAILS_JS)
+        self.assertIn('let body = { provider };', TEMP_EMAILS_JS)
+        self.assertIn("body.count = parseInt(document.getElementById('cloudmailGenerateCount')", TEMP_EMAILS_JS)
+        self.assertIn("const useBatchProvider = provider === 'cloudflare' || provider === 'cloudmail';", TEMP_EMAILS_JS)
+        self.assertIn("body.tag_ids = getCloudmailGenerateSelectedTagIds();", TEMP_EMAILS_JS)
+        self.assertIn("body.usernames = cloudmailUsernameLines;", TEMP_EMAILS_JS)
+        # one tag-cloud implementation for both providers, not a copy-paste fork
+        self.assertIn("function renderGenerateTagOptions(containerId, checkboxClass)", TEMP_EMAILS_JS)
+        self.assertIn("renderGenerateTagOptions('cloudmailGenerateTagOptions', 'cloudmail-generate-tag-checkbox')", TEMP_EMAILS_JS)
+
     def test_the_ui_does_not_collapse_cloudmail_into_gptmail(self):
         # The list used to fall through to gptmail for any unhandled method label, which
         # then drove every currentMethod-dependent branch (refresh, cache key, colours)

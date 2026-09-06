@@ -2399,8 +2399,10 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         self.assertIn('body.usernames = usernameLines;', temp_js)
         self.assertIn('usernameLines.length > 0 && usernameLines.length !== body.count', temp_js)
         self.assertIn('body.tag_ids = getCloudflareGenerateSelectedTagIds();', temp_js)
-        self.assertIn("const useCloudflareBatch = provider === 'cloudflare';", temp_js)
-        self.assertIn("fetch(useCloudflareBatch ? '/api/temp-emails/generate-batch' : '/api/temp-emails/generate'", temp_js)
+        # The batch submit path is shared with cloud-mail now, so the flag is provider-set,
+        # not hardcoded to cloudflare.
+        self.assertIn("const useBatchProvider = provider === 'cloudflare' || provider === 'cloudmail';", temp_js)
+        self.assertIn("fetch(useBatchProvider ? '/api/temp-emails/generate-batch' : '/api/temp-emails/generate'", temp_js)
         self.assertIn('formatCloudflareBatchFailureSummary(data.failures)', temp_js)
         self.assertNotIn("body.username = document.getElementById('cloudflareUsername')", temp_js)
         self.assertNotIn('data.ai_fallback_used', temp_js)

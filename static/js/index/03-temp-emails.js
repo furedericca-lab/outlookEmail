@@ -342,12 +342,23 @@
                             <div id="cloudmailFields" style="display: none;">
                                 <div class="form-grid-2">
                                     <div class="form-group">
-                                        <label class="form-label">用户名</label>
-                                        <input type="text" class="form-input" id="cloudmailUsername" placeholder="留空则随机生成">
+                                        <label class="form-label">数量</label>
+                                        <input type="number" class="form-input" id="cloudmailGenerateCount" min="1" max="50" value="1" style="width: 100%;">
                                     </div>
                                     <div class="form-group">
                                         <label class="form-label">收信域名</label>
                                         <input type="text" class="form-input" id="cloudmailDomain" placeholder="留空用设置里的默认域名">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">用户名列表</label>
+                                    <textarea class="form-input" id="cloudmailUsername" rows="2" placeholder="一行一个用户名（留空则按数量随机生成）" style="width: 100%; min-height: 48px; resize: vertical;"></textarea>
+                                    <div class="form-hint">填了就必须与数量一致；只允许小写字母、数字、点、下划线、短横线。</div>
+                                </div>
+                                <div class="form-group" style="margin-bottom: 4px;">
+                                    <label class="form-label">绑定标签</label>
+                                    <div class="tag-cloud" id="cloudmailGenerateTagOptions">
+                                        <div class="tag-cloud-empty">暂无标签</div>
                                     </div>
                                 </div>
                                 <div class="form-hint">域名必须是 cloud-mail 服务端 domain 配置里的那一个；地址密码由系统生成并加密保存，删除时会同步删到 cloud-mail。</div>
@@ -552,8 +563,8 @@
             renderCloudflareGenerateTagOptions();
         }
 
-        function renderCloudflareGenerateTagOptions() {
-            const container = document.getElementById('cloudflareGenerateTagOptions');
+        function renderGenerateTagOptions(containerId, checkboxClass) {
+            const container = document.getElementById(containerId);
             if (!container) return;
 
             const tags = typeof allTags === 'undefined' || !Array.isArray(allTags) ? [] : allTags;
@@ -572,7 +583,7 @@
                 }
                 return `
                     <label class="tag-badge-item" style="${bgStyle}">
-                        <input type="checkbox" class="cloudflare-generate-tag-checkbox" value="${escapeHtml(String(tag.id))}">
+                        <input type="checkbox" class="${checkboxClass}" value="${escapeHtml(String(tag.id))}">
                         <span class="tag-badge-label">
                             <span class="tag-badge-dot"></span>
                             <span>${escapeHtml(tag.name || '')}</span>
@@ -582,8 +593,22 @@
             }).join('');
         }
 
+        function renderCloudflareGenerateTagOptions() {
+            renderGenerateTagOptions('cloudflareGenerateTagOptions', 'cloudflare-generate-tag-checkbox');
+        }
+
+        function renderCloudmailGenerateTagOptions() {
+            renderGenerateTagOptions('cloudmailGenerateTagOptions', 'cloudmail-generate-tag-checkbox');
+        }
+
         function getCloudflareGenerateSelectedTagIds() {
             return Array.from(document.querySelectorAll('.cloudflare-generate-tag-checkbox:checked'))
+                .map(checkbox => parseInt(checkbox.value, 10))
+                .filter(Number.isFinite);
+        }
+
+        function getCloudmailGenerateSelectedTagIds() {
+            return Array.from(document.querySelectorAll('.cloudmail-generate-tag-checkbox:checked'))
                 .map(checkbox => parseInt(checkbox.value, 10))
                 .filter(Number.isFinite);
         }
@@ -668,10 +693,22 @@
                         return;
                     }
                 } else if (provider === 'cloudmail') {
-                    body.username = (document.getElementById('cloudmailUsername')?.value || '').trim();
                     body.domain = (document.getElementById('cloudmailDomain')?.value || '').trim();
-                    if (body.username && body.username.length < 3) {
-                        showToast('用户名至少 3 个字符，或留空随机生成', 'error');
+                    body.count = parseInt(document.getElementById('cloudmailGenerateCount')?.value || '1', 10);
+                    body.tag_ids = getCloudmailGenerateSelectedTagIds();
+                    const cloudmailUsernameLines = (document.getElementById('cloudmailUsername')?.value || '')
+                        .split(/\r?\n/)
+                        .map(line => line.trim())
+                        .filter(Boolean);
+                    if (cloudmailUsernameLines.length > 0) {
+                        body.usernames = cloudmailUsernameLines;
+                    }
+                    if (Number.isNaN(body.count) || body.count < 1 || body.count > 50) {
+                        showToast('数量必须在 1-50 之间', 'error');
+                        return;
+                    }
+                    if (cloudmailUsernameLines.length > 0 && cloudmailUsernameLines.length !== body.count) {
+                        showToast('用户名数量必须与创建数量一致', 'error');
                         return;
                     }
                 } else if (provider === 'cloudflare') {
@@ -702,8 +739,8 @@
                     }
                 }
 
-                const useCloudflareBatch = provider === 'cloudflare';
-                const response = await fetch(useCloudflareBatch ? '/api/temp-emails/generate-batch' : '/api/temp-emails/generate', {
+                const useBatchProvider = provider === 'cloudflare' || provider === 'cloudmail';
+                const response = await fetch(useBatchProvider ? '/api/temp-emails/generate-batch' : '/api/temp-emails/generate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body)
@@ -712,7 +749,7 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    if (useCloudflareBatch) {
+                    if (useBatchProvider) {
                         const failedText = data.failed_count ? `，失败 ${data.failed_count} 个` : '';
                         const failureSummary = formatCloudflareBatchFailureSummary(data.failures);
                         const failureSummaryText = failureSummary ? `：${failureSummary}` : '';

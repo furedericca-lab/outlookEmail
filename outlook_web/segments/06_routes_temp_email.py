@@ -2457,8 +2457,10 @@ def api_generate_cloudflare_ai_usernames():
 def api_generate_temp_emails_batch():
     data = request.json or {}
     provider = data.get('provider', 'cloudflare')
+    if provider == 'cloudmail':
+        return jsonify(generate_cloudmail_temp_emails_batch(data))
     if provider != 'cloudflare':
-        return jsonify({'success': False, 'error': '批量生成暂仅支持 Cloudflare 临时邮箱'})
+        return jsonify({'success': False, 'error': '批量生成暂仅支持 Cloudflare 与 cloud-mail 临时邮箱'})
 
     count = normalize_cloudflare_batch_count(data.get('count', 1))
     if count is None:
