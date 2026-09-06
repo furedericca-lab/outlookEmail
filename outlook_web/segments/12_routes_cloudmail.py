@@ -488,3 +488,117 @@ def api_cloudmail_test():
         return jsonify({'success': True, 'message': 'cloud-mail 连接正常', 'count': len(fetched['messages'])})
 
     return jsonify({'success': True, 'message': 'cloud-mail 令牌获取成功'})
+
+
+CLOUDMAIL_ACCOUNTS_PAGE_SIZE = 50
+CLOUDMAIL_ACCOUNTS_MAX_SIZE = 200
+
+
+def cloudmail_list_accounts(num: Any = 1, size: Any = CLOUDMAIL_ACCOUNTS_PAGE_SIZE) -> Dict[str, Any]:
+    """列 cloud-mail 实例里已有的收信邮箱。
+
+    cloud-mail 用两张表表达两件事：`user` 是登录身份，`account` 才是可收信的邮箱地址，
+    一个 user 可以管多个 account。运维实际拥有的是 account，所以这里必须走
+    /account/list；用 /user/list 会把"实例里只有 1 个管理员"当成事实，结论就是错的。
+    """
+    if not is_cloudmail_enabled():
+        return {'success': False, 'error': 'cloud-mail 未启用，请先在设置里打开'}
+
+    try:
+        page = max(1, int(num or 1))
+        page_size = min(max(1, int(size or CLOUDMAIL_ACCOUNTS_PAGE_SIZE)), CLOUDMAIL_ACCOUNTS_MAX_SIZE)
+    except (TypeError, ValueError):
+        return {'success': False, 'error': 'num/size 必须是整数'}
+
+    result = _cloudmail_admin_request('GET', '/account/list', {'num': page, 'size': page_size})
+    if not result.get('success'):
+        return {'success': False, 'error': result.get('error', '获取 cloud-mail 邮箱列表失败')}
+
+    data = result.get('data')
+    accounts: List[Dict[str, Any]] = []
+    for row in _cloudmail_rows(data):
+        email_addr = str(row.get('email') or '').strip().lower()
+        if not email_addr or '@' not in email_addr:
+            continue
+        local = get_temp_email_by_address(email_addr)
+        bound = bool(local and local.get('provider') == 'cloudmail')
+        accounts.append({
+            'email': email_addr,
+            'account_id': row.get('accountId'),
+            'name': str(row.get('name') or ''),
+            'status': row.get('status'),
+            'all_receive': row.get('allReceive'),
+            'latest_email_time': str(row.get('latestEmailTime') or ''),
+            'created_at': str(row.get('createTime') or ''),
+            'attached': bound,
+            # 只有我们亲自建过的地址才允许触发上游删除；导入的永远只解本地关联。
+            'created_by_us': bool(bound and bool(local.get('cloudmail_password'))),
+        })
+
+    total = data.get('total') if isinstance(data, dict) else len(accounts)
+    return {'success': True, 'accounts': accounts, 'total': total, 'page': page, 'size': page_size}
+
+
+def cloudmail_attach_address(email_addr: Any) -> Dict[str, Any]:
+    """把实例里已有的邮箱关联进本系统。
+
+    只建本地记录：不生成口令、不写任何凭据。读信靠实例级的开放接口
+    （public/emailList 按 toEmail 过滤，只要开放接口令牌），因此不需要该邮箱的密码。
+    """
+    normalized = normalize_email_address(str(email_addr or '').strip())
+    if not normalized or '@' not in normalized:
+        return {'success': False, 'email': str(email_addr or ''), 'error': '邮箱格式不正确'}
+
+    if not is_cloudmail_enabled():
+        return {'success': False, 'email': normalized, 'error': 'cloud-mail 未启用，请先在设置里打开'}
+
+    domain = get_cloudmail_domain()
+    if domain and not normalized.lower().endswith('@' + domain.lower()):
+        return {
+            'success': False,
+            'email': normalized,
+            'error': '只有 %s 域的地址可以导入；如要导入别的域，请先改设置里的收信域' % domain,
+        }
+
+    existing = get_temp_email_by_address(normalized)
+    if existing:
+        if existing.get('provider') == 'cloudmail':
+            return {
+                'success': True,
+                'email': normalized,
+                'already_attached': True,
+                'created_by_us': bool(existing.get('cloudmail_password')),
+            }
+        return {'success': False, 'email': normalized, 'error': '该地址已被其它提供商占用'}
+
+    if not add_temp_email(normalized, provider='cloudmail'):
+        return {'success': False, 'email': normalized, 'error': '写入本地记录失败（可能与其他操作并发重复）'}
+
+    return {'success': True, 'email': normalized, 'attached': True, 'created_by_us': False}
+
+
+@app.route('/api/cloudmail/accounts', methods=['GET'])
+@login_required
+def api_cloudmail_accounts():
+    return jsonify(cloudmail_list_accounts(request.args.get('num'), request.args.get('size')))
+
+
+@app.route('/api/cloudmail/attach', methods=['POST'])
+@login_required
+def api_cloudmail_attach():
+    """导入实例里已有的邮箱，单个 email 或 emails 数组都接受。"""
+    data = request.json or {}
+    raw = data.get('emails') if isinstance(data.get('emails'), list) else [data.get('email')]
+    items = [cloudmail_attach_address(one) for one in raw if str(one or '').strip()]
+    if not items:
+        return jsonify({'success': False, 'error': '没有要导入的地址'})
+
+    attached = [item for item in items if item.get('success')]
+    failed = [item for item in items if not item.get('success')]
+    return jsonify({
+        'success': bool(attached),
+        'attached_count': len(attached),
+        'already_count': len([item for item in attached if item.get('already_attached')]),
+        'failed': failed,
+        'items': items,
+    })

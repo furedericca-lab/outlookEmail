@@ -1865,6 +1865,105 @@
             }
         }
 
+        let cloudmailAccountsCache = [];
+
+        async function loadCloudmailAccounts() {
+            const btn = document.getElementById('loadCloudmailAccountsBtn');
+            if (btn) { btn.disabled = true; }
+            const box = document.getElementById('settingsCloudmailAccountList');
+            if (box) { box.innerHTML = '<div class="form-hint">读取中...</div>'; }
+            try {
+                const response = await fetch('/api/cloudmail/accounts?size=200');
+                const data = await response.json();
+                if (!data || !data.success) {
+                    if (box) {
+                        box.innerHTML = `<div class="form-hint">${escapeHtml((data && data.error) || '读取失败')}</div>`;
+                    }
+                    return;
+                }
+                cloudmailAccountsCache = data.accounts || [];
+                renderCloudmailAccountList(data.total);
+            } catch (error) {
+                if (box) { box.innerHTML = '<div class="form-hint">读取失败，请检查服务地址与管理凭证</div>'; }
+            } finally {
+                if (btn) { btn.disabled = false; }
+            }
+        }
+
+        function renderCloudmailAccountList(total) {
+            const box = document.getElementById('settingsCloudmailAccountList');
+            if (!box) { return; }
+            if (!cloudmailAccountsCache.length) {
+                box.innerHTML = '<div class="form-hint">实例里没有可导入的邮箱</div>';
+                return;
+            }
+            box.innerHTML = cloudmailAccountsCache.map(account => {
+                const email = escapeHtml(account.email || '');
+                // 最近收信时间为空就是从未收到过，这比任何状态码都能说明问题。
+                const latest = account.latest_email_time
+                    ? `最近收信 ${escapeHtml(account.latest_email_time)}`
+                    : '从未收到邮件';
+                const tag = account.attached
+                    ? (account.created_by_us ? '本系统创建' : '已关联')
+                    : '';
+                const tagMarkup = tag ? `<span class="account-status-pill muted">${escapeHtml(tag)}</span>` : '';
+                const disabled = account.attached ? 'disabled' : '';
+                return `
+                    <label class="tag-badge-item" style="display: flex; align-items: center; gap: 8px; margin: 2px 0;">
+                        <input type="checkbox" class="cloudmail-attach-checkbox" value="${email}" ${disabled}>
+                        <span class="tag-badge-label" style="font-family: var(--font-mono, monospace);">${email}</span>
+                        ${tagMarkup}
+                        <span class="form-hint" style="margin-left: auto;">${latest}</span>
+                    </label>
+                `;
+            }).join('');
+            const hint = document.createElement('div');
+            hint.className = 'form-hint';
+            hint.style.marginTop = '6px';
+            hint.textContent = `共 ${total != null ? total : cloudmailAccountsCache.length} 个邮箱，已关联 ${cloudmailAccountsCache.filter(a => a.attached).length} 个`;
+            box.appendChild(hint);
+        }
+
+        function getCloudmailAttachSelectedEmails() {
+            return Array.from(document.querySelectorAll('.cloudmail-attach-checkbox:checked'))
+                .map(box => box.value)
+                .filter(Boolean);
+        }
+
+        async function attachCloudmailAccounts() {
+            const emails = getCloudmailAttachSelectedEmails();
+            if (!emails.length) {
+                showToast('请先勾选要导入的邮箱', 'warning');
+                return;
+            }
+            const btn = document.getElementById('attachCloudmailAccountsBtn');
+            if (btn) { btn.disabled = true; }
+            try {
+                const response = await fetch('/api/cloudmail/attach', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ emails })
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    handleApiError(data, '导入失败');
+                    return;
+                }
+                const failed = data.failed || [];
+                const failedText = failed.length ? `，${failed.length} 个失败（${escapeHtml(failed[0].error || '')}）` : '';
+                showToast(`已导入 ${data.attached_count || 0} 个邮箱${failedText}`,
+                    failed.length ? 'warning' : 'success');
+                // 导入后临时邮箱列表与标签计数都变了，缓存必须丢弃重拉。
+                delete accountsCache['temp'];
+                if (typeof loadTempEmails === 'function') { loadTempEmails(true); }
+                await loadCloudmailAccounts();
+            } catch (error) {
+                showToast('导入失败', 'error');
+            } finally {
+                if (btn) { btn.disabled = false; }
+            }
+        }
+
         async function loadSettings() {
             ensureForwardingSettingsUI();
             try {

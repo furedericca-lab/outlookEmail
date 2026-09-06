@@ -98,6 +98,20 @@ class CloudmailSettingsFrontendTests(unittest.TestCase):
         self.assertTrue(sections)
         self.assertEqual(sorted(sections - targets), [], 'settings section without a sidebar link')
 
+    def test_the_import_entry_for_existing_mailboxes_is_wired(self):
+        # The operator's mailboxes already exist in cloud-mail; without an import entry
+        # they can never be used, which is the whole point of this feature.
+        self.assertIn('id="settingsCloudmailAccountList"', DIALOGS_MANAGEMENT)
+        self.assertIn('id="loadCloudmailAccountsBtn"', DIALOGS_MANAGEMENT)
+        self.assertIn('id="attachCloudmailAccountsBtn"', DIALOGS_MANAGEMENT)
+        self.assertIn("fetch('/api/cloudmail/accounts", SETTINGS_JS)
+        self.assertIn("fetch('/api/cloudmail/attach'", SETTINGS_JS)
+        # Importing must invalidate the mailbox-list cache, otherwise the operator
+        # imports and still sees nothing - the same class of "looks absent" bug.
+        block = SETTINGS_JS[SETTINGS_JS.index('async function attachCloudmailAccounts()'):]
+        self.assertIn("delete accountsCache['temp']", block)
+        self.assertIn('loadTempEmails(true)', block)
+
     def test_the_hint_names_the_failure_the_operator_otherwise_hits(self):
         # Filling the web UI address instead of the API address is the classic mistake,
         # so the form itself has to say it.
@@ -142,6 +156,7 @@ class CloudmailServedPageTests(unittest.TestCase):
         self.assertIn('id="settingsCloudmailBaseUrl"', html)
         self.assertIn('data-provider="cloudmail"', html)
         self.assertIn('data-target="settingsCloudmailSection"', html)
+        self.assertIn('id="settingsCloudmailAccountList"', html)
         self.assertNotIn('id="settingsCloudmailAdminPassword" value=', html)
 
     def test_served_scripts_contain_the_cloudmail_wiring(self):

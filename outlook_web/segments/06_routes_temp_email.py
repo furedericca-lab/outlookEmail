@@ -1493,6 +1493,11 @@ def cleanup_temp_email_provider_resource(temp_email: Optional[Dict]) -> None:
         if token and account_id:
             duckmail_delete_account(token, account_id)
     elif provider == 'cloudmail':
+        if not temp_email.get('cloudmail_password'):
+            # 从实例导入的地址不是我们建的：没有它的口令，也不该由我们删。此类记录
+            # 的 `cloudmail_password` 永远是空，这既是"导入"的标记也是安全开关。
+            logging.info('cloud-mail 地址 %s 为导入关联，仅解除本地记录，不动上游', email_addr)
+            return
         # 开放接口本身没有删除能力，所以用管理员登录态去删（服务端是硬删除）：
         # 只有能精确匹配到唯一地址才动手。上游失败不阻断本地删除，但必须留日志。
         result = cloudmail_delete_address(email_addr)

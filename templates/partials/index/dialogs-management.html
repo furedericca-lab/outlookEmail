@@ -665,6 +665,17 @@
                         <div class="form-group settings-form-span-full" id="cloudmailTestResult" style="display: none;">
                             <div class="form-hint" id="cloudmailTestResultText"></div>
                         </div>
+                        <div class="form-group settings-form-span-full">
+                            <label class="form-label">从实例导入已有邮箱</label>
+                            <div class="form-hint">导入只建立本地关联：不生成也不存储该邮箱的口令，不改动 cloud-mail。此类邮箱被删除时也只解除本地关联，不会去删上游——因为不是本系统建的。读邮件不需要邮箱口令。</div>
+                            <div id="settingsCloudmailAccountList" style="max-height: 240px; overflow: auto; margin-top: 8px;">
+                                <div class="form-hint">尚未读取。点下方“读取邮箱列表”。</div>
+                            </div>
+                            <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+                                <button class="btn btn-secondary" type="button" id="loadCloudmailAccountsBtn" onclick="loadCloudmailAccounts()">读取邮箱列表</button>
+                                <button class="btn btn-primary" type="button" id="attachCloudmailAccountsBtn" onclick="attachCloudmailAccounts()">导入所选</button>
+                            </div>
+                        </div>
                     </div>
                 </section>
                 <section class="settings-section" id="settingsCloudflareSection">
