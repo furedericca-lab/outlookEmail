@@ -23,6 +23,10 @@ if TYPE_CHECKING:
 
 CLOUDMAIL_DEFAULT_API_PREFIX = '/api'
 CLOUDMAIL_PAGE_SIZE = 50
+# emailList 的 size 上限；再大会被服务端切回 50，所以单页最大只能到这个值。
+CLOUDMAIL_MAX_PAGE_SIZE = 200
+# offset 与页边界不对齐时，最多往上游走几页，宁可少给也不要无限翻页。
+CLOUDMAIL_MAX_PAGES = 10
 
 
 def get_cloudmail_base_url() -> str:
@@ -220,6 +224,17 @@ def _cloudmail_timestamp(value: Any) -> int:
     return 0
 
 
+def _cloudmail_rows(payload: Any) -> List[Dict[str, Any]]:
+    """cloud-mail 列表类接口有两种形状：直接是数组，或者 {list: [...], total: n}。"""
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if isinstance(payload, dict):
+        rows = payload.get('list') or payload.get('rows') or payload.get('emails') or []
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
 def cloudmail_list_messages(email_addr: str, num: int = 1,
                             size: int = CLOUDMAIL_PAGE_SIZE) -> Dict[str, Any]:
     token = get_cloudmail_public_token()
@@ -230,34 +245,146 @@ def cloudmail_list_messages(email_addr: str, num: int = 1,
         'POST',
         '/public/emailList',
         token=token,
-        json_data={'toEmail': email_addr, 'num': num, 'size': size},
+        json_data={'toEmail': email_addr, 'num': max(1, int(num)), 'size': max(1, int(size))},
     )
     if not result.get('success'):
         return {'success': False, 'error': result.get('error', '获取 cloud-mail 邮件失败')}
 
-    data = result.get('data')
-    rows = data
-    if isinstance(data, dict):
-        rows = data.get('list') or data.get('rows') or data.get('emails') or []
-    return {'success': True, 'rows': rows or []}
+    return {'success': True, 'rows': _cloudmail_rows(result.get('data'))}
 
 
 def fetch_cloudmail_temp_messages(email_addr: str, temp_email: Optional[Dict[str, Any]],
                                   limit: int = CLOUDMAIL_PAGE_SIZE,
                                   offset: int = 0) -> Dict[str, Any]:
-    """与 fetch_cloudflare_temp_messages 对齐的入口：拉取并统一某个地址的邮件。"""
-    if offset:
-        return {'success': False, 'error': 'cloud-mail 开放接口不支持偏移量分页'}
+    """与 fetch_cloudflare_temp_messages 对齐的入口：拉取并统一某个地址的邮件。
 
-    listed = cloudmail_list_messages(email_addr, num=1, size=max(1, min(int(limit or 0), 200)))
-    if not listed.get('success'):
-        return {'success': False, 'error': listed.get('error', '获取 cloud-mail 邮件失败')}
+    emailList 只有页码 num 与页大小 size，没有 offset：能整除时直接取那一页，
+    否则从前往后逐页走到位（最多 MAX_PAGES 页），保证 offset 语义正确而不是直接报错。
+    """
+    wanted_limit = max(1, min(int(limit or CLOUDMAIL_PAGE_SIZE), CLOUDMAIL_MAX_PAGE_SIZE))
+    offset = max(0, int(offset or 0))
+
+    if offset % wanted_limit == 0:
+        page = offset // wanted_limit + 1
+        listed = cloudmail_list_messages(email_addr, num=page, size=wanted_limit)
+        if not listed.get('success'):
+            return {'success': False, 'error': listed.get('error', '获取 cloud-mail 邮件失败')}
+        rows = listed.get('rows')
+    else:
+        # 页边界不对齐：逐页拼接再切片，页数上限防止无限往上游发请求。
+        collected: List[Any] = []
+        for page in range(1, CLOUDMAIL_MAX_PAGES + 1):
+            listed = cloudmail_list_messages(email_addr, num=page, size=CLOUDMAIL_PAGE_SIZE)
+            if not listed.get('success'):
+                return {'success': False, 'error': listed.get('error', '获取 cloud-mail 邮件失败')}
+            page_rows = listed.get('rows')
+            collected.extend(page_rows)
+            if len(page_rows) < CLOUDMAIL_PAGE_SIZE or len(collected) >= offset + wanted_limit:
+                break
+        rows = collected[offset:offset + wanted_limit] or collected
 
     return {
         'success': True,
-        'messages': cloudmail_normalize_messages(email_addr, listed.get('rows')),
+        'messages': cloudmail_normalize_messages(email_addr, rows),
         'method': 'cloud-mail',
     }
+
+
+def _cloudmail_is_auth_failure(error: Any) -> bool:
+    text = str(error or '').lower()
+    return 'token' in text or '身份认证' in text or 'unauthor' in text or '登录' in text
+
+
+def get_cloudmail_admin_token(force_refresh: bool = False) -> Optional[str]:
+    """cloud-mail 的管理员 JWT。
+
+    开放接口令牌只能建号与查邮件，/user/list 与删除地址要登录态，所以单独缓存一份；
+    它和开放接口令牌一样只以密文入库，也绝不回给接口调用方。
+    """
+    if not force_refresh:
+        cached = str(get_setting_decrypted('cloudmail_admin_token', '') or '').strip()
+        if cached:
+            return cached
+
+    admin_email = get_cloudmail_admin_email()
+    admin_password = get_cloudmail_admin_password()
+    if not admin_email or not admin_password:
+        return None
+
+    result = cloudmail_request('POST', '/login', json_data={'email': admin_email, 'password': admin_password})
+    if not result.get('success'):
+        logging.error('cloud-mail 管理员登录失败: %s', result.get('error', '未知错误'))
+        return None
+
+    token = str((result.get('data') or {}).get('token', '') or '').strip()
+    if not token:
+        return None
+    set_setting_encrypted('cloudmail_admin_token', token)
+    return token
+
+
+def _cloudmail_admin_request(method: str, endpoint: str, params: Optional[Dict] = None,
+                             json_data: Optional[Dict] = None) -> Dict[str, Any]:
+    """带管理员登录态的请求；登录态失效时重登一次再试，不循环重试。"""
+    for attempt in (0, 1):
+        token = get_cloudmail_admin_token(force_refresh=attempt > 0)
+        if not token:
+            return {'success': False, 'error': '无法获取 cloud-mail 管理员登录态，请检查管理员邮箱与密码'}
+
+        result = cloudmail_request(method, endpoint, token=token, params=params, json_data=json_data)
+        if result.get('success'):
+            return result
+        if not _cloudmail_is_auth_failure(result.get('error')):
+            return result
+        set_setting_encrypted('cloudmail_admin_token', '')
+
+    return result
+
+
+def cloudmail_find_user_id(email_addr: str) -> Dict[str, Any]:
+    """把邮箱地址解析成 cloud-mail 的 userId。
+
+    /user/list 的 email 参数是 **前缀 LIKE** 而不是精确匹配，所以必须在本地再精确比一次；
+    命中不唯一就直接拒绝，绝不能“猜一个 id”去删账号。
+    """
+    target = str(email_addr or '').strip().lower()
+    if not target:
+        return {'success': False, 'error': '邮箱地址为空'}
+
+    listed = _cloudmail_admin_request('GET', '/user/list',
+                                      params={'email': target, 'num': 1, 'size': CLOUDMAIL_PAGE_SIZE})
+    if not listed.get('success'):
+        return {'success': False, 'error': listed.get('error', '查询 cloud-mail 用户失败')}
+
+    exact = [
+        row for row in _cloudmail_rows(listed.get('data'))
+        if str(row.get('email') or '').strip().lower() == target
+    ]
+    if not exact:
+        return {'success': False, 'error': f'cloud-mail 上不存在 {target}'}
+    if len(exact) > 1:
+        return {'success': False, 'error': 'cloud-mail 返回多条完全同名的地址，已拒绝删除'}
+
+    if target == get_cloudmail_admin_email().strip().lower():
+        return {'success': False, 'error': '拒绝删除 cloud-mail 管理员账号本身'}
+
+    user_id = exact[0].get('userId')
+    if user_id in (None, ''):
+        return {'success': False, 'error': 'cloud-mail 用户列表里没有 userId'}
+    return {'success': True, 'user_id': int(user_id)}
+
+
+def cloudmail_delete_address(email_addr: str) -> Dict[str, Any]:
+    """删除 cloud-mail 上的地址（服务端是硬删除）。"""
+    found = cloudmail_find_user_id(email_addr)
+    if not found.get('success'):
+        return found
+
+    deleted = _cloudmail_admin_request('DELETE', '/user/delete', params={'userIds': str(found['user_id'])})
+    if not deleted.get('success'):
+        return {'success': False, 'error': deleted.get('error', '删除 cloud-mail 地址失败'),
+                'user_id': found['user_id']}
+    return {'success': True, 'user_id': found['user_id']}
 
 
 def build_cloudmail_messages_response(messages: List[Dict[str, Any]],
@@ -315,8 +442,9 @@ def api_cloudmail_settings_save():
         if base_url and not base_url.lower().startswith(('http://', 'https://')):
             return jsonify({'success': False, 'error': '服务地址必须以 http:// 或 https:// 开头'})
         set_setting('cloudmail_base_url', base_url)
-        # 地址换了，旧令牌一定作废，清缓存避免拿旧令牌打新实例。
+        # 地址换了，两个旧令牌一定作废，清缓存避免拿旧凭据打新实例。
         set_setting_encrypted('cloudmail_public_token', '')
+        set_setting_encrypted('cloudmail_admin_token', '')
 
     if 'api_prefix' in data:
         prefix = str(data.get('api_prefix') or '').strip() or CLOUDMAIL_DEFAULT_API_PREFIX
@@ -329,6 +457,7 @@ def api_cloudmail_settings_save():
     if str(data.get('admin_password') or '').strip():
         set_setting_encrypted('cloudmail_admin_password', str(data['admin_password']).strip())
         set_setting_encrypted('cloudmail_public_token', '')
+        set_setting_encrypted('cloudmail_admin_token', '')
 
     if 'domain' in data:
         set_setting('cloudmail_domain', str(data.get('domain') or '').strip().lower().lstrip('@').rstrip('.'))

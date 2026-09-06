@@ -1493,9 +1493,14 @@ def cleanup_temp_email_provider_resource(temp_email: Optional[Dict]) -> None:
         if token and account_id:
             duckmail_delete_account(token, account_id)
     elif provider == 'cloudmail':
-        # cloud-mail 的开放接口只提供了建号与查邮件，没有删除地址的接口，
-        # 所以本地删除不会同步上游；需要回收时到 cloud-mail 管理端处理。
-        logging.info('cloud-mail 地址 %s 无上游删除接口，仅删除本地记录', email_addr)
+        # 开放接口本身没有删除能力，所以用管理员登录态去删（服务端是硬删除）：
+        # 只有能精确匹配到唯一地址才动手。上游失败不阻断本地删除，但必须留日志。
+        result = cloudmail_delete_address(email_addr)
+        if result.get('success'):
+            logging.info('cloud-mail 地址 %s 已在上游删除', email_addr)
+        else:
+            logging.warning('cloud-mail 地址 %s 上游删除失败，仅删除本地记录：%s',
+                            email_addr, result.get('error', '未知错误'))
     elif provider == 'cloudflare':
         channel = get_cloudflare_channel_for_temp_email(temp_email)
         address_id = temp_email.get('cloudflare_address_id', '')

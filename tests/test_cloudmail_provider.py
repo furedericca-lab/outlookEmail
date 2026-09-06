@@ -231,6 +231,174 @@ class CloudmailMessageTestCase(ContextTestCase):
         post.assert_not_called()
 
 
+class CloudmailDeleteTestCase(ContextTestCase):
+    """Deleting upstream is a hard delete in cloud-mail, so lookup must be exact."""
+
+    def setUp(self):
+        super().setUp()
+        web_outlook_app.set_setting('cloudmail_base_url', 'https://mail-api.invalid')
+        web_outlook_app.set_setting('cloudmail_admin_email', 'admin@mail.example')
+        web_outlook_app.set_setting_encrypted('cloudmail_admin_password', 'admin-password-1')
+        web_outlook_app.set_setting_encrypted('cloudmail_admin_token', 'admin-jwt')
+
+    @staticmethod
+    def _user_rows(*rows):
+        return _Response(_envelope({'list': [{'userId': uid, 'email': email} for uid, email in rows],
+                                    'total': len(rows)}))
+
+    def _capture_delete(self):
+        calls = {}
+
+        def fake_delete(url, headers=None, params=None, timeout=None):
+            calls['url'] = url
+            calls['params'] = params
+            return _Response(_envelope(None))
+
+        return calls, fake_delete
+
+    def test_the_matching_user_id_is_resolved_and_used_for_the_delete(self):
+        # /user/list matches by prefix, so a prefix neighbour must not be mistaken for a hit.
+        listed = self._user_rows((8, 'reader01-extra@mail.example'), (7, 'reader01@mail.example'))
+        calls, fake_delete = self._capture_delete()
+
+        with patch.object(web_outlook_app.requests, 'get', return_value=listed), \
+                patch.object(web_outlook_app.requests, 'delete', side_effect=fake_delete):
+            result = web_outlook_app.cloudmail_delete_address('reader01@mail.example')
+
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['user_id'], 7)
+        self.assertEqual(calls['url'], 'https://mail-api.invalid/api/user/delete')
+        self.assertEqual(calls['params'], {'userIds': '7'})
+
+    def test_a_prefix_only_match_is_refused_and_deletes_nothing(self):
+        listed = self._user_rows((9, 'reader01-extra@mail.example'))
+
+        with patch.object(web_outlook_app.requests, 'get', return_value=listed), \
+                patch.object(web_outlook_app.requests, 'delete') as delete:
+            result = web_outlook_app.cloudmail_delete_address('reader01@mail.example')
+
+        self.assertFalse(result['success'])
+        self.assertIn('不存在', result['error'])
+        delete.assert_not_called()
+
+    def test_ambiguous_rows_are_refused_instead_of_guessing_an_id(self):
+        listed = self._user_rows((7, 'reader01@mail.example'), (8, 'Reader01@mail.example'))
+
+        with patch.object(web_outlook_app.requests, 'get', return_value=listed), \
+                patch.object(web_outlook_app.requests, 'delete') as delete:
+            result = web_outlook_app.cloudmail_delete_address('reader01@mail.example')
+
+        self.assertFalse(result['success'])
+        self.assertIn('多条', result['error'])
+        delete.assert_not_called()
+
+    def test_the_admin_account_itself_is_never_deleted(self):
+        listed = self._user_rows((1, 'admin@mail.example'))
+
+        with patch.object(web_outlook_app.requests, 'get', return_value=listed), \
+                patch.object(web_outlook_app.requests, 'delete') as delete:
+            result = web_outlook_app.cloudmail_delete_address('admin@mail.example')
+
+        self.assertFalse(result['success'])
+        self.assertIn('管理员', result['error'])
+        delete.assert_not_called()
+
+    def test_an_expired_admin_session_relogs_in_once(self):
+        expired = _Response(_envelope(code=401, message='身份认证失效,请重新登录'))
+        listed = self._user_rows((7, 'reader01@mail.example'))
+        responses = [expired, listed]
+        seen = {'get': 0, 'login': 0}
+
+        def fake_get(url, headers=None, params=None, timeout=None):
+            seen['get'] += 1
+            return responses.pop(0)
+
+        def fake_post(url, headers=None, params=None, json=None, timeout=None):
+            seen['login'] += 1
+            return _Response(_envelope({'token': 'fresh-jwt'}))
+
+        web_outlook_app.set_setting_encrypted('cloudmail_admin_token', '')
+
+        with patch.object(web_outlook_app.requests, 'get', side_effect=fake_get), \
+                patch.object(web_outlook_app.requests, 'post', side_effect=fake_post):
+            found = web_outlook_app.cloudmail_find_user_id('reader01@mail.example')
+
+        self.assertTrue(found['success'], found)
+        self.assertEqual(found['user_id'], 7)
+        self.assertEqual(seen['get'], 2, 'the 401 must be retried once with a fresh login')
+        self.assertEqual(seen['login'], 2)
+
+    def test_upstream_delete_failure_is_reported_to_the_caller(self):
+        listed = self._user_rows((7, 'reader01@mail.example'))
+        denied = _Response(_envelope(code=403, message='forbidden'))
+
+        with patch.object(web_outlook_app.requests, 'get', return_value=listed), \
+                patch.object(web_outlook_app.requests, 'delete', return_value=denied):
+            result = web_outlook_app.cloudmail_delete_address('reader01@mail.example')
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error'], 'forbidden')
+
+
+class CloudmailPagingTestCase(ContextTestCase):
+    """emailList only has page numbers; the adapter owes callers correct offset semantics."""
+
+    def setUp(self):
+        super().setUp()
+        web_outlook_app.set_setting('cloudmail_base_url', 'https://mail-api.invalid')
+        web_outlook_app.set_setting_encrypted('cloudmail_public_token', 'tok-abc')
+
+    def _stream(self, total: int):
+        return [{'emailId': i, 'sendEmail': 'svc@site.invalid', 'subject': f'msg {i}',
+                 'content': f'body {i}', 'text': f'body {i}', 'createTime': 1700000000 + i}
+                for i in range(total)]
+
+    def test_an_aligned_offset_reads_that_page_directly(self):
+        requested = []
+        stream = self._stream(100)
+
+        def fake_post(url, headers=None, params=None, json=None, timeout=None):
+            requested.append(dict(json))
+            page = int(json['num'])
+            size = int(json['size'])
+            return _Response(_envelope({'list': stream[(page - 1) * size:page * size], 'total': total}))
+
+        total = len(stream)
+        with patch.object(web_outlook_app.requests, 'post', side_effect=fake_post):
+            result = web_outlook_app.fetch_cloudmail_temp_messages('reader01@mail.example', None,
+                                                                   limit=50, offset=50)
+
+        self.assertTrue(result['success'], result)
+        self.assertEqual(requested, [{'toEmail': 'reader01@mail.example', 'num': 2, 'size': 50}])
+        self.assertEqual(len(result['messages']), 50)
+        self.assertEqual(result['messages'][0]['id'], '50')
+
+    def test_an_unaligned_offset_walks_pages_and_slices_once(self):
+        pages = []
+        stream = self._stream(150)
+
+        def fake_post(url, headers=None, params=None, json=None, timeout=None):
+            payload = dict(json)
+            pages.append(payload['num'])
+            size = int(payload['size'])
+            page = int(payload['num'])
+            return _Response(_envelope({'list': stream[(page - 1) * size:page * size], 'total': len(stream)}))
+
+        with patch.object(web_outlook_app.requests, 'post', side_effect=fake_post):
+            result = web_outlook_app.fetch_cloudmail_temp_messages('reader01@mail.example', None,
+                                                                   limit=50, offset=60)
+
+        self.assertTrue(result['success'], result)
+        self.assertEqual(len(result['messages']), 50)
+        self.assertEqual(result['messages'][0]['id'], '60')
+        self.assertEqual(pages[-1], 3, 'must stop once offset+limit is covered')
+        self.assertLessEqual(len(pages), web_outlook_app.CLOUDMAIL_MAX_PAGES)
+
+    def test_the_page_size_ceiling_matches_what_the_service_honours(self):
+        self.assertLessEqual(web_outlook_app.CLOUDMAIL_PAGE_SIZE, 50)
+        self.assertGreaterEqual(web_outlook_app.CLOUDMAIL_MAX_PAGES, 1)
+
+
 class CloudmailRouteTestCase(ContextTestCase):
     def setUp(self):
         super().setUp()
