@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +18,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMP_EMAILS_JS = (ROOT_DIR / 'static' / 'js' / 'index' / '03-temp-emails.js').read_text(encoding='utf-8')
 SETTINGS_JS = (ROOT_DIR / 'static' / 'js' / 'index' / '07-settings.js').read_text(encoding='utf-8')
 DIALOGS_MANAGEMENT = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-management.html').read_text(encoding='utf-8')
+LAYOUT = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'layout.html').read_text(encoding='utf-8')
 
 
 class CloudmailCreateDialogFrontendTests(unittest.TestCase):
@@ -50,6 +52,18 @@ class CloudmailCreateDialogFrontendTests(unittest.TestCase):
         self.assertIn("email.provider === 'cloudmail' ? 'cloud-mail'", TEMP_EMAILS_JS)
 
 
+class CloudmailListFilterFrontendTests(unittest.TestCase):
+    """The provider has to appear in the channel filter row, not only in the create dialog."""
+
+    def test_the_provider_filter_row_offers_a_cloudmail_chip(self):
+        self.assertIn('data-provider="cloudmail"', LAYOUT)
+        self.assertIn("filterTempEmailByProvider('cloudmail')", LAYOUT)
+
+    def test_the_empty_state_names_cloudmail_instead_of_gptmail(self):
+        # Without this branch an empty cloud-mail filter reads "no GPTMail mailboxes".
+        self.assertIn("filter === 'cloudmail' ? 'cloud-mail' : 'GPTMail')", TEMP_EMAILS_JS)
+
+
 class CloudmailSettingsFrontendTests(unittest.TestCase):
     def test_settings_card_exists_with_the_documented_fields(self):
         self.assertIn('id="settingsCloudmailSection"', DIALOGS_MANAGEMENT)
@@ -64,6 +78,25 @@ class CloudmailSettingsFrontendTests(unittest.TestCase):
         tag = DIALOGS_MANAGEMENT[tag_start:DIALOGS_MANAGEMENT.index('>', start)]
         self.assertIn('type="password"', tag)
         self.assertNotIn('value=', tag, 'a stored credential must never be rendered into the page')
+
+    def test_the_card_is_reachable_from_the_settings_sidebar(self):
+        # The settings dialog is navigated through its sidebar list. A section that only
+        # exists in the DOM has no entry point, which is exactly how this card shipped
+        # the first time and read as "the provider is not in settings at all".
+        self.assertIn('data-target="settingsCloudmailSection"', DIALOGS_MANAGEMENT)
+        link = DIALOGS_MANAGEMENT[DIALOGS_MANAGEMENT.index('data-target="settingsCloudmailSection"'):]
+        link = link[:link.index('</button>')]
+        self.assertIn('cloud-mail', link)
+
+    def test_no_settings_section_is_orphaned_from_the_sidebar(self):
+        # Structural guard: adding a section without its sidebar link is silent in the
+        # DOM and invisible in the product.
+        sections = set(re.findall(
+            r'<section[^>]*class="[^"]*\bsettings-section\b[^"]*"[^>]*\bid="([^"]+)"',
+            DIALOGS_MANAGEMENT))
+        targets = set(re.findall(r'data-target="([^"]+)"', DIALOGS_MANAGEMENT))
+        self.assertTrue(sections)
+        self.assertEqual(sorted(sections - targets), [], 'settings section without a sidebar link')
 
     def test_the_hint_names_the_failure_the_operator_otherwise_hits(self):
         # Filling the web UI address instead of the API address is the classic mistake,
@@ -107,6 +140,8 @@ class CloudmailServedPageTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertIn('id="settingsCloudmailSection"', html)
         self.assertIn('id="settingsCloudmailBaseUrl"', html)
+        self.assertIn('data-provider="cloudmail"', html)
+        self.assertIn('data-target="settingsCloudmailSection"', html)
         self.assertNotIn('id="settingsCloudmailAdminPassword" value=', html)
 
     def test_served_scripts_contain_the_cloudmail_wiring(self):

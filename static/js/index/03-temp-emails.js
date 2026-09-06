@@ -119,7 +119,7 @@
                 : [];
 
             if (filtered.length === 0 && cloudflareGlobalEntries.length === 0) {
-                const providerName = filter === 'duckmail' ? 'DuckMail' : (filter === 'cloudflare' ? 'Cloudflare' : 'GPTMail');
+                const providerName = filter === 'duckmail' ? 'DuckMail' : (filter === 'cloudflare' ? 'Cloudflare' : (filter === 'cloudmail' ? 'cloud-mail' : 'GPTMail'));
                 const hasAdvancedFilters = !!searchQuery || selectedTagFilters.size > 0;
                 const hint = hasAdvancedFilters
                     ? '未找到匹配的临时邮箱'
